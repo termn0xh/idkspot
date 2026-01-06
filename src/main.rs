@@ -54,40 +54,67 @@ impl IdkspotApp {
     }
 }
 
-/// Configure custom dark theme with accent colors
+/// Configure GNOME Adwaita dark theme
 fn configure_visuals(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
 
-    // Deep dark background
-    visuals.panel_fill = Color32::from_rgb(26, 26, 26); // #1a1a1a
-    visuals.window_fill = Color32::from_rgb(26, 26, 26);
-    visuals.extreme_bg_color = Color32::from_rgb(18, 18, 18);
+    // Adwaita Dark colors
+    let bg_dark = Color32::from_rgb(36, 36, 36);        // #242424 - window bg
+    let bg_darker = Color32::from_rgb(30, 30, 30);      // #1e1e1e - headerbar
+    let bg_view = Color32::from_rgb(48, 48, 48);        // #303030 - view bg
+    let fg_color = Color32::from_rgb(255, 255, 255);    // white text
+    let fg_dim = Color32::from_rgb(154, 153, 150);      // #9a9996 - dim text
+    let accent = Color32::from_rgb(53, 132, 228);       // #3584e4 - GNOME blue
+    let accent_hover = Color32::from_rgb(98, 160, 234); // #62a0ea
+    let destructive = Color32::from_rgb(224, 27, 36);   // #e01b24 - red
+    let success = Color32::from_rgb(46, 194, 126);      // #2ec27e - green
+    let border = Color32::from_rgb(54, 54, 54);         // subtle border
 
-    // Accent color - Cyan
-    let accent = Color32::from_rgb(0, 200, 200);
-    let accent_hover = Color32::from_rgb(0, 230, 230);
+    // Backgrounds
+    visuals.panel_fill = bg_dark;
+    visuals.window_fill = bg_dark;
+    visuals.extreme_bg_color = bg_darker;
+    visuals.faint_bg_color = bg_view;
 
-    // Widget styling with rounding
-    let rounding = Rounding::same(8.0);
+    // Adwaita-style rounding (12px for buttons, 6px for inputs)
+    let button_rounding = Rounding::same(6.0);
 
-    visuals.widgets.noninteractive.rounding = rounding;
-    visuals.widgets.inactive.rounding = rounding;
-    visuals.widgets.hovered.rounding = rounding;
-    visuals.widgets.active.rounding = rounding;
-    visuals.widgets.open.rounding = rounding;
+    visuals.widgets.noninteractive.rounding = button_rounding;
+    visuals.widgets.inactive.rounding = button_rounding;
+    visuals.widgets.hovered.rounding = button_rounding;
+    visuals.widgets.active.rounding = button_rounding;
+    visuals.widgets.open.rounding = button_rounding;
 
-    // Accent colors for interactive widgets
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(50, 50, 55);
-    visuals.widgets.active.bg_fill = Color32::from_rgb(60, 60, 65);
-    visuals.selection.bg_fill = accent;
-    visuals.hyperlink_color = accent;
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.5, accent_hover);
+    // Widget backgrounds
+    visuals.widgets.noninteractive.bg_fill = bg_view;
+    visuals.widgets.inactive.bg_fill = bg_view;
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(58, 58, 58);
+    visuals.widgets.active.bg_fill = Color32::from_rgb(68, 68, 68);
+
+    // Borders
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, border);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, accent_hover);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.5, accent);
 
     // Text colors
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, Color32::from_rgb(200, 200, 200));
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, fg_dim);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, fg_color);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, fg_color);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, fg_color);
+
+    // Selection and accent
+    visuals.selection.bg_fill = accent;
+    visuals.selection.stroke = Stroke::new(1.0, accent);
+    visuals.hyperlink_color = accent;
+
+    // Window styling
+    visuals.window_rounding = Rounding::same(12.0);
+    visuals.window_stroke = Stroke::new(1.0, border);
 
     ctx.set_visuals(visuals);
 }
+
 
 impl eframe::App for IdkspotApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -97,12 +124,12 @@ impl eframe::App for IdkspotApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_space(15.0);
 
-            // Title
+            // Title - GNOME style
             ui.vertical_centered(|ui| {
                 ui.heading(
-                    egui::RichText::new("🔥 idkspot")
-                        .size(28.0)
-                        .color(Color32::from_rgb(0, 200, 200)),
+                    egui::RichText::new("idkspot")
+                        .size(24.0)
+                        .color(Color32::WHITE),
                 );
             });
 
@@ -118,13 +145,13 @@ impl eframe::App for IdkspotApp {
                     ui.label(
                         egui::RichText::new("✓ Compatible")
                             .size(14.0)
-                            .color(Color32::from_rgb(80, 220, 100)),
+                            .color(Color32::from_rgb(46, 194, 126)),  // #2ec27e
                     );
                 } else {
                     ui.label(
                         egui::RichText::new("✗ Hardware Not Supported")
                             .size(14.0)
-                            .color(Color32::from_rgb(255, 80, 80)),
+                            .color(Color32::from_rgb(224, 27, 36)),  // #e01b24
                     );
                 }
             });
@@ -147,7 +174,7 @@ impl eframe::App for IdkspotApp {
                 ui.label(
                     egui::RichText::new(format!("⚠ {}", err))
                         .size(13.0)
-                        .color(Color32::from_rgb(255, 200, 80)),
+                        .color(Color32::from_rgb(248, 228, 92)),  // #f8e45c - Adwaita warning
                 );
             } else {
                 ui.horizontal(|ui| {
@@ -157,7 +184,7 @@ impl eframe::App for IdkspotApp {
                         egui::RichText::new(&self.interface)
                             .size(14.0)
                             .strong()
-                            .color(Color32::from_rgb(0, 200, 200)),
+                            .color(Color32::from_rgb(53, 132, 228)),  // #3584e4
                     );
                     ui.add_space(10.0);
                     ui.label(
@@ -205,39 +232,37 @@ impl eframe::App for IdkspotApp {
             // IGNITE / STOP button
             ui.vertical_centered(|ui| {
                 if is_running {
-                    // STOP button (red)
+                    // STOP button - Adwaita destructive red
                     let stop_button = egui::Button::new(
-                        egui::RichText::new("⏹ STOP")
-                            .size(22.0)
-                            .strong()
+                        egui::RichText::new("Stop Hotspot")
+                            .size(16.0)
                             .color(Color32::WHITE),
                     )
-                    .fill(Color32::from_rgb(200, 50, 50))
-                    .min_size(Vec2::new(220.0, 55.0))
-                    .rounding(Rounding::same(10.0));
+                    .fill(Color32::from_rgb(224, 27, 36))  // #e01b24
+                    .min_size(Vec2::new(200.0, 42.0))
+                    .rounding(Rounding::same(6.0));
 
                     if ui.add(stop_button).clicked() {
                         self.status_message = stop_hotspot(&self.interface);
                         *self.is_running.lock().unwrap() = false;
                     }
                 } else {
-                    // IGNITE button (cyan/teal)
+                    // IGNITE button - Adwaita suggested blue
                     let can_ignite = self.compatible && self.detection_error.is_none();
                     let button_color = if can_ignite {
-                        Color32::from_rgb(0, 180, 180)
+                        Color32::from_rgb(53, 132, 228)  // #3584e4
                     } else {
                         Color32::from_rgb(80, 80, 80)
                     };
 
                     let ignite_button = egui::Button::new(
-                        egui::RichText::new("🚀 IGNITE")
-                            .size(22.0)
-                            .strong()
+                        egui::RichText::new("Start Hotspot")
+                            .size(16.0)
                             .color(Color32::WHITE),
                     )
                     .fill(button_color)
-                    .min_size(Vec2::new(220.0, 55.0))
-                    .rounding(Rounding::same(10.0));
+                    .min_size(Vec2::new(200.0, 42.0))
+                    .rounding(Rounding::same(6.0));
 
                     if ui.add_enabled(can_ignite, ignite_button).clicked() {
                         let result = start_hotspot(
@@ -266,11 +291,11 @@ impl eframe::App for IdkspotApp {
                 ui.add_space(10.0);
 
                 let color = if self.status_message.starts_with("Error") {
-                    Color32::from_rgb(255, 100, 100)
+                    Color32::from_rgb(224, 27, 36)    // #e01b24 - error red
                 } else if self.status_message.contains("stopped") {
-                    Color32::from_rgb(255, 200, 80)
+                    Color32::from_rgb(248, 228, 92)   // #f8e45c - warning yellow
                 } else {
-                    Color32::from_rgb(100, 200, 255)
+                    Color32::from_rgb(46, 194, 126)   // #2ec27e - success green
                 };
 
                 ui.vertical_centered(|ui| {
