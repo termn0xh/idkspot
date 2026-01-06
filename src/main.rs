@@ -1,11 +1,12 @@
-use eframe::egui;
+use eframe::egui::{self, Color32, Rounding, Stroke, Vec2};
 use regex::Regex;
-use std::process::Command;
+use std::process::{Child, Command};
+use std::sync::{Arc, Mutex};
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([450.0, 350.0])
+            .with_inner_size([480.0, 400.0])
             .with_resizable(true),
         ..Default::default()
     };
@@ -13,10 +14,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "idkspot",
         options,
-        Box::new(|cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Ok(Box::new(IdkspotApp::new()))
-        }),
+        Box::new(|_cc| Ok(Box::new(IdkspotApp::new()))),
     )
 }
 
@@ -30,6 +28,8 @@ struct IdkspotApp {
     password: String,
     status_message: String,
     detection_error: Option<String>,
+    is_running: Arc<Mutex<bool>>,
+    child_process: Arc<Mutex<Option<Child>>>,
 }
 
 impl IdkspotApp {
@@ -48,110 +48,241 @@ impl IdkspotApp {
             password: String::new(),
             status_message: String::new(),
             detection_error,
+            is_running: Arc::new(Mutex::new(false)),
+            child_process: Arc::new(Mutex::new(None)),
         }
     }
 }
 
+/// Configure custom dark theme with accent colors
+fn configure_visuals(ctx: &egui::Context) {
+    let mut visuals = egui::Visuals::dark();
+
+    // Deep dark background
+    visuals.panel_fill = Color32::from_rgb(26, 26, 26); // #1a1a1a
+    visuals.window_fill = Color32::from_rgb(26, 26, 26);
+    visuals.extreme_bg_color = Color32::from_rgb(18, 18, 18);
+
+    // Accent color - Cyan
+    let accent = Color32::from_rgb(0, 200, 200);
+    let accent_hover = Color32::from_rgb(0, 230, 230);
+
+    // Widget styling with rounding
+    let rounding = Rounding::same(8.0);
+
+    visuals.widgets.noninteractive.rounding = rounding;
+    visuals.widgets.inactive.rounding = rounding;
+    visuals.widgets.hovered.rounding = rounding;
+    visuals.widgets.active.rounding = rounding;
+    visuals.widgets.open.rounding = rounding;
+
+    // Accent colors for interactive widgets
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(50, 50, 55);
+    visuals.widgets.active.bg_fill = Color32::from_rgb(60, 60, 65);
+    visuals.selection.bg_fill = accent;
+    visuals.hyperlink_color = accent;
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.5, accent_hover);
+
+    // Text colors
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, Color32::from_rgb(200, 200, 200));
+
+    ctx.set_visuals(visuals);
+}
+
 impl eframe::App for IdkspotApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Apply custom theme
+        configure_visuals(ctx);
+
         egui::CentralPanel::default().show(ctx, |ui| {
+            ui.add_space(15.0);
+
+            // Title
             ui.vertical_centered(|ui| {
-                ui.add_space(10.0);
-                ui.heading("🔥 idkspot");
-                ui.add_space(10.0);
+                ui.heading(
+                    egui::RichText::new("🔥 idkspot")
+                        .size(28.0)
+                        .color(Color32::from_rgb(0, 200, 200)),
+                );
             });
-
-            ui.separator();
-
-            // Compatibility status
-            ui.horizontal(|ui| {
-                ui.label("Hardware Status:");
-                if self.compatible {
-                    ui.colored_label(egui::Color32::GREEN, "✓ Compatible");
-                } else {
-                    ui.colored_label(egui::Color32::RED, "✗ Hardware Not Supported");
-                }
-            });
-
-            if !self.compat_message.is_empty() {
-                ui.small(&self.compat_message);
-            }
-
-            ui.add_space(10.0);
-            ui.separator();
-
-            // Interface detection
-            if let Some(ref err) = self.detection_error {
-                ui.colored_label(egui::Color32::YELLOW, format!("⚠ {}", err));
-            } else {
-                ui.horizontal(|ui| {
-                    ui.label("Using Interface:");
-                    ui.strong(&self.interface);
-                    ui.label(format!("on Channel {} ({} MHz)", self.channel, self.frequency));
-                });
-            }
 
             ui.add_space(15.0);
             ui.separator();
             ui.add_space(10.0);
 
+            // Compatibility status
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Hardware Status:").size(14.0));
+                ui.add_space(5.0);
+                if self.compatible {
+                    ui.label(
+                        egui::RichText::new("✓ Compatible")
+                            .size(14.0)
+                            .color(Color32::from_rgb(80, 220, 100)),
+                    );
+                } else {
+                    ui.label(
+                        egui::RichText::new("✗ Hardware Not Supported")
+                            .size(14.0)
+                            .color(Color32::from_rgb(255, 80, 80)),
+                    );
+                }
+            });
+
+            if !self.compat_message.is_empty() {
+                ui.add_space(3.0);
+                ui.label(
+                    egui::RichText::new(&self.compat_message)
+                        .size(11.0)
+                        .color(Color32::GRAY),
+                );
+            }
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(10.0);
+
+            // Interface detection
+            if let Some(ref err) = self.detection_error {
+                ui.label(
+                    egui::RichText::new(format!("⚠ {}", err))
+                        .size(13.0)
+                        .color(Color32::from_rgb(255, 200, 80)),
+                );
+            } else {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Interface:").size(14.0));
+                    ui.add_space(5.0);
+                    ui.label(
+                        egui::RichText::new(&self.interface)
+                            .size(14.0)
+                            .strong()
+                            .color(Color32::from_rgb(0, 200, 200)),
+                    );
+                    ui.add_space(10.0);
+                    ui.label(
+                        egui::RichText::new(format!("Channel {} ({} MHz)", self.channel, self.frequency))
+                            .size(13.0)
+                            .color(Color32::GRAY),
+                    );
+                });
+            }
+
+            ui.add_space(20.0);
+            ui.separator();
+            ui.add_space(15.0);
+
             // Input fields
-            let enabled = self.compatible && self.detection_error.is_none();
+            let is_running = *self.is_running.lock().unwrap();
+            let enabled = self.compatible && self.detection_error.is_none() && !is_running;
 
             ui.add_enabled_ui(enabled, |ui| {
                 egui::Grid::new("inputs")
                     .num_columns(2)
-                    .spacing([10.0, 8.0])
+                    .spacing([15.0, 12.0])
                     .show(ui, |ui| {
-                        ui.label("SSID:");
-                        ui.add(egui::TextEdit::singleline(&mut self.ssid).desired_width(250.0));
+                        ui.label(egui::RichText::new("SSID:").size(14.0));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.ssid)
+                                .desired_width(280.0)
+                                .font(egui::TextStyle::Body),
+                        );
                         ui.end_row();
 
-                        ui.label("Password:");
+                        ui.label(egui::RichText::new("Password:").size(14.0));
                         ui.add(
                             egui::TextEdit::singleline(&mut self.password)
                                 .password(true)
-                                .desired_width(250.0),
+                                .desired_width(280.0)
+                                .font(egui::TextStyle::Body),
                         );
                         ui.end_row();
                     });
+            });
 
-                ui.add_space(20.0);
+            ui.add_space(25.0);
 
-                // IGNITE button
-                ui.vertical_centered(|ui| {
-                    let button = egui::Button::new(
-                        egui::RichText::new("🚀 IGNITE")
-                            .size(24.0)
-                            .strong(),
+            // IGNITE / STOP button
+            ui.vertical_centered(|ui| {
+                if is_running {
+                    // STOP button (red)
+                    let stop_button = egui::Button::new(
+                        egui::RichText::new("⏹ STOP")
+                            .size(22.0)
+                            .strong()
+                            .color(Color32::WHITE),
                     )
-                    .min_size(egui::vec2(200.0, 50.0));
+                    .fill(Color32::from_rgb(200, 50, 50))
+                    .min_size(Vec2::new(220.0, 55.0))
+                    .rounding(Rounding::same(10.0));
 
-                    if ui.add(button).clicked() {
-                        self.status_message = execute_create_ap(
+                    if ui.add(stop_button).clicked() {
+                        self.status_message = stop_hotspot(&self.interface);
+                        *self.is_running.lock().unwrap() = false;
+                    }
+                } else {
+                    // IGNITE button (cyan/teal)
+                    let can_ignite = self.compatible && self.detection_error.is_none();
+                    let button_color = if can_ignite {
+                        Color32::from_rgb(0, 180, 180)
+                    } else {
+                        Color32::from_rgb(80, 80, 80)
+                    };
+
+                    let ignite_button = egui::Button::new(
+                        egui::RichText::new("🚀 IGNITE")
+                            .size(22.0)
+                            .strong()
+                            .color(Color32::WHITE),
+                    )
+                    .fill(button_color)
+                    .min_size(Vec2::new(220.0, 55.0))
+                    .rounding(Rounding::same(10.0));
+
+                    if ui.add_enabled(can_ignite, ignite_button).clicked() {
+                        let result = start_hotspot(
                             &self.interface,
                             self.channel,
                             &self.ssid,
                             &self.password,
                         );
+                        match result {
+                            Ok(msg) => {
+                                self.status_message = msg;
+                                *self.is_running.lock().unwrap() = true;
+                            }
+                            Err(msg) => {
+                                self.status_message = msg;
+                            }
+                        }
                     }
-                });
+                }
             });
 
             // Status message
             if !self.status_message.is_empty() {
-                ui.add_space(15.0);
+                ui.add_space(20.0);
                 ui.separator();
-                ui.add_space(5.0);
+                ui.add_space(10.0);
 
                 let color = if self.status_message.starts_with("Error") {
-                    egui::Color32::RED
+                    Color32::from_rgb(255, 100, 100)
+                } else if self.status_message.contains("stopped") {
+                    Color32::from_rgb(255, 200, 80)
                 } else {
-                    egui::Color32::LIGHT_BLUE
+                    Color32::from_rgb(100, 200, 255)
                 };
-                ui.colored_label(color, &self.status_message);
+
+                ui.vertical_centered(|ui| {
+                    ui.label(egui::RichText::new(&self.status_message).size(13.0).color(color));
+                });
             }
+
+            ui.add_space(10.0);
         });
+
+        // Request repaint to update UI state
+        ctx.request_repaint();
     }
 }
 
@@ -164,12 +295,7 @@ fn check_compatibility() -> (bool, String) {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Find "valid interface combinations" section and check for simultaneous AP+managed
     let mut in_valid_section = false;
-
-    // Regex patterns that match modes anywhere inside #{ ... } blocks
-    // e.g., matches "managed" in "#{ managed }" or "#{ managed, AP }"
-    // and "ap" in "#{ AP }" or "#{ AP, P2P-client, P2P-GO }"
     let managed_re = Regex::new(r"(?i)#\{[^}]*\bmanaged\b[^}]*\}").unwrap();
     let ap_re = Regex::new(r"(?i)#\{[^}]*\bap\b[^}]*\}").unwrap();
 
@@ -180,13 +306,11 @@ fn check_compatibility() -> (bool, String) {
         }
 
         if in_valid_section {
-            // End of section detection
             if !line.starts_with('\t') && !line.starts_with(' ') && !line.is_empty() {
                 in_valid_section = false;
                 continue;
             }
 
-            // Check if this line has both managed and AP modes (in any #{ } block)
             let has_managed = managed_re.is_match(line);
             let has_ap = ap_re.is_match(line);
 
@@ -198,7 +322,6 @@ fn check_compatibility() -> (bool, String) {
 
     (false, "AP+Managed simultaneous mode not found".to_string())
 }
-
 
 /// Detect wireless interface and frequency from `iw dev`
 fn detect_interface() -> (String, u32, Option<String>) {
@@ -231,7 +354,7 @@ fn detect_interface() -> (String, u32, Option<String>) {
     }
 
     if frequency == 0 {
-        return (interface, frequency, Some("Could not detect frequency (interface may not be connected)".to_string()));
+        return (interface, frequency, Some("Could not detect frequency (not connected?)".to_string()));
     }
 
     (interface, frequency, None)
@@ -240,77 +363,62 @@ fn detect_interface() -> (String, u32, Option<String>) {
 /// Convert frequency (MHz) to channel number
 fn freq_to_channel(freq: u32) -> u32 {
     match freq {
-        // 2.4 GHz band
-        2412 => 1,
-        2417 => 2,
-        2422 => 3,
-        2427 => 4,
-        2432 => 5,
-        2437 => 6,
-        2442 => 7,
-        2447 => 8,
-        2452 => 9,
-        2457 => 10,
-        2462 => 11,
-        2467 => 12,
-        2472 => 13,
-        2484 => 14,
-        // 5 GHz band (common channels)
-        5180 => 36,
-        5200 => 40,
-        5220 => 44,
-        5240 => 48,
-        5260 => 52,
-        5280 => 56,
-        5300 => 60,
-        5320 => 64,
-        5500 => 100,
-        5520 => 104,
-        5540 => 108,
-        5560 => 112,
-        5580 => 116,
-        5600 => 120,
-        5620 => 124,
-        5640 => 128,
-        5660 => 132,
-        5680 => 136,
-        5700 => 140,
-        5720 => 144,
-        5745 => 149,
-        5765 => 153,
-        5785 => 157,
-        5805 => 161,
-        5825 => 165,
-        // Fallback calculation
+        2412 => 1, 2417 => 2, 2422 => 3, 2427 => 4, 2432 => 5,
+        2437 => 6, 2442 => 7, 2447 => 8, 2452 => 9, 2457 => 10,
+        2462 => 11, 2467 => 12, 2472 => 13, 2484 => 14,
+        5180 => 36, 5200 => 40, 5220 => 44, 5240 => 48,
+        5260 => 52, 5280 => 56, 5300 => 60, 5320 => 64,
+        5500 => 100, 5520 => 104, 5540 => 108, 5560 => 112,
+        5580 => 116, 5600 => 120, 5620 => 124, 5640 => 128,
+        5660 => 132, 5680 => 136, 5700 => 140, 5720 => 144,
+        5745 => 149, 5765 => 153, 5785 => 157, 5805 => 161, 5825 => 165,
         f if f >= 2412 && f <= 2484 => (f - 2407) / 5,
         f if f >= 5180 && f <= 5825 => (f - 5000) / 5,
         _ => 0,
     }
 }
 
-/// Execute create_ap command with pkexec
-fn execute_create_ap(interface: &str, channel: u32, ssid: &str, password: &str) -> String {
+/// Start the hotspot using create_ap (spawns in background)
+fn start_hotspot(interface: &str, channel: u32, ssid: &str, password: &str) -> Result<String, String> {
     if ssid.is_empty() {
-        return "Error: SSID cannot be empty".to_string();
+        return Err("Error: SSID cannot be empty".to_string());
     }
     if password.len() < 8 {
-        return "Error: Password must be at least 8 characters".to_string();
+        return Err("Error: Password must be at least 8 characters".to_string());
     }
 
+    let interface = interface.to_string();
+    let channel_str = channel.to_string();
+    let ssid_display = ssid.to_string(); // For display message
+    let ssid = ssid.to_string();
+    let password = password.to_string();
+
+    // Spawn in background thread to avoid blocking GUI
+    std::thread::spawn(move || {
+        let _ = Command::new("pkexec")
+            .args([
+                "create_ap",
+                "-c",
+                &channel_str,
+                &interface,
+                &interface,
+                &ssid,
+                &password,
+            ])
+            .spawn();
+    });
+
+    Ok(format!("🔥 Hotspot '{}' starting on channel {}...", ssid_display, channel))
+}
+
+/// Stop the hotspot using create_ap --stop
+fn stop_hotspot(interface: &str) -> String {
     let result = Command::new("pkexec")
-        .args([
-            "create_ap",
-            "-c",
-            &channel.to_string(),
-            interface,
-            interface,
-            ssid,
-            password,
-        ])
+        .args(["create_ap", "--stop", interface])
         .spawn();
 
     match result {
-        Ok(_) => format!("Hotspot '{}' starting on channel {}...", ssid, channel),
-        Err(e) => format!("Error: Failed to start hotspot: {}", e),
+        Ok(_) => format!("⏹ Hotspot stopped on {}", interface),
+        Err(e) => format!("Error stopping hotspot: {}", e),
     }
 }
