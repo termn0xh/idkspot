@@ -1,0 +1,9 @@
+[package]
+name = "idkspot"
+version = "0.1.0"
+edition = "2021"
+description = "A native Linux GUI for creating Wi-Fi hotspots"
+
+[dependencies]
+eframe = "0.29"
+regex = "1"
