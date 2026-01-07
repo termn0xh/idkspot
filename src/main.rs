@@ -1,11 +1,11 @@
 use gtk4::prelude::*;
-use gtk4::{Application, ApplicationWindow, Box as GtkBox, Button, Entry, Label, Orientation, PasswordEntry};
+use gtk4::{Application, ApplicationWindow, Box as GtkBox, Button, Entry, Label, Orientation, PasswordEntry, gio};
 use libadwaita as adw;
 use regex::Regex;
 use std::cell::RefCell;
 use std::process::Command;
 use std::rc::Rc;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const APP_ID: &str = "org.idkspot.Hotspot";
 
@@ -22,11 +22,35 @@ fn main() -> gtk4::glib::ExitCode {
     // Initialize libadwaita
     adw::init().expect("Failed to initialize libadwaita");
 
+    // Create app with HANDLES_OPEN flag for single instance behavior
     let app = Application::builder()
         .application_id(APP_ID)
+        .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
 
-    app.connect_activate(build_ui);
+    // Store window reference for re-activation
+    let window: Rc<RefCell<Option<ApplicationWindow>>> = Rc::new(RefCell::new(None));
+    
+    let window_clone = window.clone();
+    app.connect_activate(move |app| {
+        // If window exists, just show it
+        if let Some(ref win) = *window_clone.borrow() {
+            SHOW_WINDOW.store(true, Ordering::SeqCst);
+            win.set_visible(true);
+            win.present();
+            return;
+        }
+        // Otherwise build new UI
+        build_ui(app, window_clone.clone());
+    });
+
+    // Handle command line (for second instance launches)
+    let window_clone2 = window.clone();
+    app.connect_command_line(move |app, _| {
+        // Activate the app (which will show existing window or create new one)
+        app.activate();
+        0
+    });
     
     // Keep app running even when window is closed
     app.set_accels_for_action("app.quit", &["<Primary>q"]);
@@ -38,6 +62,7 @@ fn main() -> gtk4::glib::ExitCode {
     
     result
 }
+
 
 fn run_tray_service() {
     use ksni::{Tray, TrayService, menu::*};
@@ -95,11 +120,7 @@ fn run_tray_service() {
     let _ = handle;
 }
 
-fn build_ui(app: &Application) {
-    // Check if window should be shown
-    if !SHOW_WINDOW.load(Ordering::SeqCst) {
-        return;
-    }
+fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>>) {
 
     // Get hardware info
     let (compatible, compat_message) = check_compatibility();
@@ -297,6 +318,9 @@ fn build_ui(app: &Application) {
 
     window.set_child(Some(&main_box));
     window.present();
+
+    // Store window reference for single-instance re-activation
+    *window_ref.borrow_mut() = Some(window.clone());
 
     // Check periodically if window should be shown
     let window_clone = window.clone();
