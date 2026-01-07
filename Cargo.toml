@@ -7,3 +7,5 @@ description = "A native Linux GUI for creating Wi-Fi hotspots"
 [dependencies]
 eframe = "0.29"
 regex = "1"
+tray-icon = "0.19"
+image = "0.25"
