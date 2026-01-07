@@ -1,15 +1,24 @@
 use gtk4::prelude::*;
 use gtk4::{Application, ApplicationWindow, Box as GtkBox, Button, Entry, Label, Orientation, PasswordEntry};
 use libadwaita as adw;
-use libadwaita::prelude::*;
 use regex::Regex;
 use std::cell::RefCell;
 use std::process::Command;
 use std::rc::Rc;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 const APP_ID: &str = "org.idkspot.Hotspot";
 
+// Global state for tray communication
+static SHOW_WINDOW: AtomicBool = AtomicBool::new(true);
+static APP_RUNNING: AtomicBool = AtomicBool::new(true);
+
 fn main() -> gtk4::glib::ExitCode {
+    // Start tray icon in background thread
+    std::thread::spawn(|| {
+        run_tray_service();
+    });
+
     // Initialize libadwaita
     adw::init().expect("Failed to initialize libadwaita");
 
@@ -18,10 +27,80 @@ fn main() -> gtk4::glib::ExitCode {
         .build();
 
     app.connect_activate(build_ui);
-    app.run()
+    
+    // Keep app running even when window is closed
+    app.set_accels_for_action("app.quit", &["<Primary>q"]);
+
+    let result = app.run();
+    
+    // Signal tray to exit
+    APP_RUNNING.store(false, Ordering::SeqCst);
+    
+    result
+}
+
+fn run_tray_service() {
+    use ksni::{Tray, TrayService, menu::*};
+
+    struct IdkspotTray;
+
+    impl Tray for IdkspotTray {
+        fn id(&self) -> String {
+            "idkspot".to_string()
+        }
+
+        fn title(&self) -> String {
+            "idkspot - Wi-Fi Hotspot".to_string()
+        }
+
+        fn icon_name(&self) -> String {
+            "network-wireless-hotspot".to_string()
+        }
+
+        fn menu(&self) -> Vec<MenuItem<Self>> {
+            vec![
+                StandardItem {
+                    label: "Show Window".into(),
+                    activate: Box::new(|_| {
+                        SHOW_WINDOW.store(true, Ordering::SeqCst);
+                    }),
+                    ..Default::default()
+                }.into(),
+                MenuItem::Separator,
+                StandardItem {
+                    label: "Quit".into(),
+                    activate: Box::new(|_| {
+                        APP_RUNNING.store(false, Ordering::SeqCst);
+                        std::process::exit(0);
+                    }),
+                    ..Default::default()
+                }.into(),
+            ]
+        }
+
+        fn activate(&mut self, _x: i32, _y: i32) {
+            SHOW_WINDOW.store(true, Ordering::SeqCst);
+        }
+    }
+
+    let service = TrayService::new(IdkspotTray);
+    let handle = service.handle();
+    service.spawn();
+
+    // Keep tray alive while app is running
+    while APP_RUNNING.load(Ordering::SeqCst) {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    
+    let _ = handle;
 }
 
 fn build_ui(app: &Application) {
+    // Check if window should be shown
+    if !SHOW_WINDOW.load(Ordering::SeqCst) {
+        return;
+    }
+
     // Get hardware info
     let (compatible, compat_message) = check_compatibility();
     let (interface, frequency, detection_error) = detect_interface();
@@ -41,6 +120,14 @@ fn build_ui(app: &Application) {
 
     // Set minimum size
     window.set_size_request(380, 340);
+
+    // Handle window close - hide instead of destroy
+    let app_clone = app.clone();
+    window.connect_close_request(move |win| {
+        win.set_visible(false);
+        SHOW_WINDOW.store(false, Ordering::SeqCst);
+        gtk4::glib::Propagation::Stop
+    });
 
     // Main container
     let main_box = GtkBox::new(Orientation::Vertical, 12);
@@ -185,6 +272,13 @@ fn build_ui(app: &Application) {
 
     main_box.append(&action_button);
 
+    // Minimize to tray hint
+    let tray_hint = Label::new(Some("Close window to minimize to system tray"));
+    tray_hint.add_css_class("dim-label");
+    tray_hint.add_css_class("caption");
+    tray_hint.set_margin_top(12);
+    main_box.append(&tray_hint);
+
     // Add custom CSS
     let css_provider = gtk4::CssProvider::new();
     css_provider.load_from_data(
@@ -203,6 +297,19 @@ fn build_ui(app: &Application) {
 
     window.set_child(Some(&main_box));
     window.present();
+
+    // Check periodically if window should be shown
+    let window_clone = window.clone();
+    gtk4::glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+        if SHOW_WINDOW.load(Ordering::SeqCst) && !window_clone.is_visible() {
+            window_clone.set_visible(true);
+            window_clone.present();
+        }
+        if !APP_RUNNING.load(Ordering::SeqCst) {
+            std::process::exit(0);
+        }
+        gtk4::glib::ControlFlow::Continue
+    });
 }
 
 fn check_compatibility() -> (bool, String) {
