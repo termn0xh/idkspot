@@ -1,68 +1,74 @@
 # idkspot
 
-A native Rust GUI for Linux Wi-Fi Hotspots (Simultaneous Mode).
+A native GTK4 Linux app for Wi-Fi Hotspot creation.
 
 ![Rust](https://img.shields.io/badge/Rust-000000?style=flat&logo=rust&logoColor=white)
+![GTK4](https://img.shields.io/badge/GTK4-4A86CF?style=flat&logo=gnome&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat&logo=linux&logoColor=black)
 
 ## Features
 
-- **Hardware Check** — Automatically detects if your Wi-Fi card supports simultaneous AP+Managed mode
-- **Auto-Detection** — Finds your wireless interface and current channel
-- **One-Click Hotspot** — Start a hotspot with the IGNITE button
-- **Clean Stop** — Gracefully stop the hotspot with the STOP button
-- **Modern UI** — Dark theme with cyan accents
+- 🔍 **Hardware Check** — Detects if your Wi-Fi card supports AP+Managed mode
+- 📡 **Auto-Detection** — Finds wireless interface and current channel
+- 🔥 **One-Click Hotspot** — Start/Stop with a single button
+- 🔒 **Password Visibility Toggle** — Built-in show/hide button
+- 📌 **System Tray** — Minimizes to tray, persists in background
+- 🔄 **Single Instance** — Re-launching from menu shows existing window
+- 🎨 **Native Look** — GTK4 + libadwaita for GNOME integration
 
 ## Dependencies
 
 | Package | Purpose |
 |---------|---------|
 | `linux-wifi-hotspot` | Provides `create_ap` command |
-| `polkit` | For `pkexec` privilege elevation |
-| `gcc` | Rust compilation |
-| `pkg-config` | Build dependency resolution |
+| `gtk4` | GUI framework |
+| `libadwaita` | GNOME styling |
+| `dbus` | System tray communication |
 | `iw` | Wireless interface detection |
+| `polkit` | Privilege elevation (`pkexec`) |
 
-### Install Dependencies (Arch Linux)
+### Arch Linux
 
 ```bash
-sudo pacman -S linux-wifi-hotspot polkit gcc pkg-config iw
+sudo pacman -S linux-wifi-hotspot gtk4 libadwaita dbus iw polkit
 ```
 
-### Install Dependencies (Debian/Ubuntu)
+### Debian/Ubuntu
 
 ```bash
-sudo apt install create-ap policykit-1 gcc pkg-config iw
+sudo apt install create-ap libgtk-4-1 libadwaita-1-0 libdbus-1-dev iw policykit-1
 ```
 
 ## Installation
 
 ```bash
-# Clone the repository
+# Clone
 git clone https://github.com/yourusername/idkspot.git
 cd idkspot
 
-# Build release binary
+# Build
 cargo build --release
 
-# (Optional) Install system-wide
+# Install binary
 sudo cp target/release/idkspot /usr/bin/
+
+# Install desktop entry (shows in app menu)
+sudo cp idkspot.desktop /usr/share/applications/
 ```
 
 ## Usage
 
 ```bash
-# Run from build directory
-./target/release/idkspot
-
-# Or if installed system-wide
 idkspot
 ```
 
-1. The app checks hardware compatibility on startup
-2. Enter your desired SSID and password (min 8 characters)
-3. Click **IGNITE** to start the hotspot
-4. Click **STOP** to stop the hotspot
+Or search for **idkspot** in your application menu.
+
+1. App checks hardware compatibility on startup
+2. Enter SSID and password (min 8 chars)
+3. Click **Start Hotspot**
+4. Close window → App minimizes to system tray
+5. Click tray icon to reopen, right-click for menu
 
 ## License
 
