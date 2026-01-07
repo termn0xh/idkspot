@@ -8,13 +8,10 @@ A native GTK4 Linux app for Wi-Fi Hotspot creation.
 
 ## Features
 
-- 🔍 **Hardware Check** — Detects if your Wi-Fi card supports AP+Managed mode
-- 📡 **Auto-Detection** — Finds wireless interface and current channel
-- 🔥 **One-Click Hotspot** — Start/Stop with a single button
-- 🔒 **Password Visibility Toggle** — Built-in show/hide button
-- 📌 **System Tray** — Minimizes to tray, persists in background
-- 🔄 **Single Instance** — Re-launching from menu shows existing window
-- 🎨 **Native Look** — GTK4 + libadwaita for GNOME integration
+- **Hardware Check** — Detects if your Wi-Fi card supports AP+Managed mode
+- **Auto-Detection** — Finds wireless interface and current channel
+- **One-Click Hotspot** — Start/Stop with a single button
+- **System Tray** — Minimizes to tray, persists in background
 
 ## Dependencies
 
@@ -43,7 +40,7 @@ sudo apt install create-ap libgtk-4-1 libadwaita-1-0 libdbus-1-dev iw policykit-
 
 ```bash
 # Clone
-git clone https://github.com/yourusername/idkspot.git
+git clone https://github.com/termn0xh/idkspot.git
 cd idkspot
 
 # Build
