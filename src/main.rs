@@ -1,387 +1,210 @@
-use eframe::egui::{self, Color32, Rounding, Stroke, Vec2};
+use gtk4::prelude::*;
+use gtk4::{Application, ApplicationWindow, Box as GtkBox, Button, Entry, Label, Orientation, PasswordEntry};
+use libadwaita as adw;
+use libadwaita::prelude::*;
 use regex::Regex;
+use std::cell::RefCell;
 use std::process::Command;
-use std::sync::{Arc, Mutex};
-use tray_icon::{TrayIconBuilder, menu::{Menu, MenuEvent, MenuItem}};
+use std::rc::Rc;
 
-// Shared state for tray communication
-static SHOW_WINDOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
-static SHOULD_QUIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+const APP_ID: &str = "org.idkspot.Hotspot";
 
-fn main() -> eframe::Result<()> {
-    // Create tray menu
-    let menu = Menu::new();
-    let show_item = MenuItem::new("Show", true, None);
-    let quit_item = MenuItem::new("Quit", true, None);
-    let _ = menu.append(&show_item);
-    let _ = menu.append(&quit_item);
+fn main() -> gtk4::glib::ExitCode {
+    // Initialize libadwaita
+    adw::init().expect("Failed to initialize libadwaita");
 
-    // Create tray icon (simple colored square as icon)
-    let icon = create_tray_icon();
-    let _tray = TrayIconBuilder::new()
-        .with_menu(Box::new(menu))
-        .with_tooltip("idkspot - Wi-Fi Hotspot")
-        .with_icon(icon)
-        .build()
-        .ok();
+    let app = Application::builder()
+        .application_id(APP_ID)
+        .build();
 
-    // Handle tray menu events in background
-    let show_id = show_item.id().clone();
-    let quit_id = quit_item.id().clone();
-    std::thread::spawn(move || {
-        loop {
-            if let Ok(event) = MenuEvent::receiver().recv() {
-                if event.id == show_id {
-                    SHOW_WINDOW.store(true, std::sync::atomic::Ordering::SeqCst);
-                } else if event.id == quit_id {
-                    SHOULD_QUIT.store(true, std::sync::atomic::Ordering::SeqCst);
-                    std::process::exit(0);
+    app.connect_activate(build_ui);
+    app.run()
+}
+
+fn build_ui(app: &Application) {
+    // Get hardware info
+    let (compatible, compat_message) = check_compatibility();
+    let (interface, frequency, detection_error) = detect_interface();
+    let channel = freq_to_channel(frequency);
+
+    // State
+    let is_running = Rc::new(RefCell::new(false));
+
+    // Main window
+    let window = ApplicationWindow::builder()
+        .application(app)
+        .title("idkspot")
+        .default_width(420)
+        .default_height(380)
+        .resizable(true)
+        .build();
+
+    // Set minimum size
+    window.set_size_request(380, 340);
+
+    // Main container
+    let main_box = GtkBox::new(Orientation::Vertical, 12);
+    main_box.set_margin_top(20);
+    main_box.set_margin_bottom(20);
+    main_box.set_margin_start(24);
+    main_box.set_margin_end(24);
+
+    // Title
+    let title = Label::new(Some("idkspot"));
+    title.add_css_class("title-1");
+    main_box.append(&title);
+
+    // Hardware status
+    let status_box = GtkBox::new(Orientation::Horizontal, 8);
+    status_box.set_halign(gtk4::Align::Center);
+    let status_label = Label::new(Some("Hardware Status:"));
+    status_box.append(&status_label);
+
+    let compat_label = if compatible {
+        let l = Label::new(Some("✓ Compatible"));
+        l.add_css_class("success");
+        l
+    } else {
+        let l = Label::new(Some("✗ Not Supported"));
+        l.add_css_class("error");
+        l
+    };
+    status_box.append(&compat_label);
+    main_box.append(&status_box);
+
+    if !compat_message.is_empty() {
+        let msg = Label::new(Some(&compat_message));
+        msg.add_css_class("dim-label");
+        msg.add_css_class("caption");
+        main_box.append(&msg);
+    }
+
+    // Interface info
+    if let Some(ref err) = detection_error {
+        let err_label = Label::new(Some(&format!("⚠ {}", err)));
+        err_label.add_css_class("warning");
+        main_box.append(&err_label);
+    } else {
+        let iface_box = GtkBox::new(Orientation::Horizontal, 8);
+        iface_box.set_halign(gtk4::Align::Center);
+        iface_box.append(&Label::new(Some("Interface:")));
+        let iface_name = Label::new(Some(&interface));
+        iface_name.add_css_class("accent");
+        iface_box.append(&iface_name);
+        iface_box.append(&Label::new(Some(&format!("Channel {} ({} MHz)", channel, frequency))));
+        main_box.append(&iface_box);
+    }
+
+    // Separator
+    let sep1 = gtk4::Separator::new(Orientation::Horizontal);
+    sep1.set_margin_top(8);
+    sep1.set_margin_bottom(8);
+    main_box.append(&sep1);
+
+    // SSID entry
+    let ssid_box = GtkBox::new(Orientation::Horizontal, 12);
+    ssid_box.append(&Label::new(Some("SSID:")));
+    let ssid_entry = Entry::new();
+    ssid_entry.set_text("idkspot");
+    ssid_entry.set_hexpand(true);
+    ssid_box.append(&ssid_entry);
+    main_box.append(&ssid_box);
+
+    // Password entry with visibility toggle
+    let pass_box = GtkBox::new(Orientation::Horizontal, 12);
+    pass_box.append(&Label::new(Some("Password:")));
+    let pass_entry = PasswordEntry::new();
+    pass_entry.set_show_peek_icon(true);
+    pass_entry.set_hexpand(true);
+    pass_box.append(&pass_entry);
+    main_box.append(&pass_box);
+
+    // Status message
+    let status_msg = Label::new(None);
+    status_msg.set_margin_top(8);
+    main_box.append(&status_msg);
+
+    // Action button
+    let action_button = Button::with_label("Start Hotspot");
+    action_button.add_css_class("suggested-action");
+    action_button.add_css_class("pill");
+    action_button.set_margin_top(12);
+
+    // Disable if not compatible
+    let can_start = compatible && detection_error.is_none();
+    action_button.set_sensitive(can_start);
+
+    // Clone for closure
+    let interface_clone = interface.clone();
+    let is_running_clone = is_running.clone();
+    let status_msg_clone = status_msg.clone();
+    let ssid_entry_clone = ssid_entry.clone();
+    let pass_entry_clone = pass_entry.clone();
+    let button_clone = action_button.clone();
+
+    action_button.connect_clicked(move |_| {
+        let mut running = is_running_clone.borrow_mut();
+
+        if *running {
+            // Stop hotspot
+            let result = stop_hotspot(&interface_clone);
+            status_msg_clone.set_text(&result);
+            status_msg_clone.remove_css_class("success");
+            status_msg_clone.add_css_class("warning");
+            button_clone.set_label("Start Hotspot");
+            button_clone.remove_css_class("destructive-action");
+            button_clone.add_css_class("suggested-action");
+            ssid_entry_clone.set_sensitive(true);
+            pass_entry_clone.set_sensitive(true);
+            *running = false;
+        } else {
+            // Start hotspot
+            let ssid = ssid_entry_clone.text().to_string();
+            let password = pass_entry_clone.text().to_string();
+
+            match start_hotspot(&interface_clone, channel, &ssid, &password) {
+                Ok(msg) => {
+                    status_msg_clone.set_text(&msg);
+                    status_msg_clone.remove_css_class("error");
+                    status_msg_clone.add_css_class("success");
+                    button_clone.set_label("Stop Hotspot");
+                    button_clone.remove_css_class("suggested-action");
+                    button_clone.add_css_class("destructive-action");
+                    ssid_entry_clone.set_sensitive(false);
+                    pass_entry_clone.set_sensitive(false);
+                    *running = true;
+                }
+                Err(msg) => {
+                    status_msg_clone.set_text(&msg);
+                    status_msg_clone.remove_css_class("success");
+                    status_msg_clone.add_css_class("error");
                 }
             }
         }
     });
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([480.0, 420.0])
-            .with_min_inner_size([400.0, 380.0])  // Minimum size constraint
-            .with_resizable(true),
-        ..Default::default()
-    };
+    main_box.append(&action_button);
 
-    eframe::run_native(
-        "idkspot",
-        options,
-        Box::new(|_cc| Ok(Box::new(IdkspotApp::new()))),
-    )
+    // Add custom CSS
+    let css_provider = gtk4::CssProvider::new();
+    css_provider.load_from_data(
+        r#"
+        .success { color: #2ec27e; }
+        .error { color: #e01b24; }
+        .warning { color: #f8e45c; }
+        .accent { color: #3584e4; font-weight: bold; }
+        "#,
+    );
+    gtk4::style_context_add_provider_for_display(
+        &gtk4::gdk::Display::default().unwrap(),
+        &css_provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+
+    window.set_child(Some(&main_box));
+    window.present();
 }
 
-fn create_tray_icon() -> tray_icon::Icon {
-    // Create a simple 32x32 icon (GNOME blue color)
-    let width = 32u32;
-    let height = 32u32;
-    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-    
-    for y in 0..height {
-        for x in 0..width {
-            // Create a rounded square with GNOME blue
-            let margin = 4;
-            let in_bounds = x >= margin && x < width - margin && y >= margin && y < height - margin;
-            if in_bounds {
-                rgba.push(53);   // R - #3584e4
-                rgba.push(132);  // G
-                rgba.push(228);  // B
-                rgba.push(255);  // A
-            } else {
-                rgba.push(0);
-                rgba.push(0);
-                rgba.push(0);
-                rgba.push(0);
-            }
-        }
-    }
-    
-    tray_icon::Icon::from_rgba(rgba, width, height).expect("Failed to create icon")
-}
-
-struct IdkspotApp {
-    compatible: bool,
-    compat_message: String,
-    interface: String,
-    channel: u32,
-    frequency: u32,
-    ssid: String,
-    password: String,
-    show_password: bool,  // Password visibility toggle
-    status_message: String,
-    detection_error: Option<String>,
-    is_running: Arc<Mutex<bool>>,
-}
-
-impl IdkspotApp {
-    fn new() -> Self {
-        let (compatible, compat_message) = check_compatibility();
-        let (interface, frequency, detection_error) = detect_interface();
-        let channel = freq_to_channel(frequency);
-
-        Self {
-            compatible,
-            compat_message,
-            interface,
-            channel,
-            frequency,
-            ssid: "idkspot".to_string(),
-            password: String::new(),
-            show_password: false,
-            status_message: String::new(),
-            detection_error,
-            is_running: Arc::new(Mutex::new(false)),
-        }
-    }
-}
-
-/// Configure GNOME Adwaita dark theme
-fn configure_visuals(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::dark();
-
-    // Adwaita Dark colors
-    let bg_dark = Color32::from_rgb(36, 36, 36);
-    let bg_darker = Color32::from_rgb(30, 30, 30);
-    let bg_view = Color32::from_rgb(48, 48, 48);
-    let fg_color = Color32::WHITE;
-    let fg_dim = Color32::from_rgb(154, 153, 150);
-    let accent = Color32::from_rgb(53, 132, 228);
-    let accent_hover = Color32::from_rgb(98, 160, 234);
-    let border = Color32::from_rgb(54, 54, 54);
-
-    visuals.panel_fill = bg_dark;
-    visuals.window_fill = bg_dark;
-    visuals.extreme_bg_color = bg_darker;
-    visuals.faint_bg_color = bg_view;
-
-    let button_rounding = Rounding::same(6.0);
-    visuals.widgets.noninteractive.rounding = button_rounding;
-    visuals.widgets.inactive.rounding = button_rounding;
-    visuals.widgets.hovered.rounding = button_rounding;
-    visuals.widgets.active.rounding = button_rounding;
-    visuals.widgets.open.rounding = button_rounding;
-
-    visuals.widgets.noninteractive.bg_fill = bg_view;
-    visuals.widgets.inactive.bg_fill = bg_view;
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(58, 58, 58);
-    visuals.widgets.active.bg_fill = Color32::from_rgb(68, 68, 68);
-
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border);
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, border);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, accent_hover);
-    visuals.widgets.active.bg_stroke = Stroke::new(1.5, accent);
-
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, fg_dim);
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, fg_color);
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, fg_color);
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, fg_color);
-
-    visuals.selection.bg_fill = accent;
-    visuals.selection.stroke = Stroke::new(1.0, accent);
-    visuals.hyperlink_color = accent;
-    visuals.window_rounding = Rounding::same(12.0);
-    visuals.window_stroke = Stroke::new(1.0, border);
-
-    ctx.set_visuals(visuals);
-}
-
-impl eframe::App for IdkspotApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        configure_visuals(ctx);
-
-        // Handle close to tray
-        if ctx.input(|i| i.viewport().close_requested()) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-            SHOW_WINDOW.store(false, std::sync::atomic::Ordering::SeqCst);
-        }
-
-        // Show window from tray
-        if SHOW_WINDOW.load(std::sync::atomic::Ordering::SeqCst) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        }
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add_space(15.0);
-
-            // Title
-            ui.vertical_centered(|ui| {
-                ui.heading(
-                    egui::RichText::new("idkspot")
-                        .size(24.0)
-                        .color(Color32::WHITE),
-                );
-            });
-
-            ui.add_space(15.0);
-            ui.separator();
-            ui.add_space(10.0);
-
-            // Compatibility status
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Hardware Status:").size(14.0));
-                ui.add_space(5.0);
-                if self.compatible {
-                    ui.label(
-                        egui::RichText::new("✓ Compatible")
-                            .size(14.0)
-                            .color(Color32::from_rgb(46, 194, 126)),
-                    );
-                } else {
-                    ui.label(
-                        egui::RichText::new("✗ Hardware Not Supported")
-                            .size(14.0)
-                            .color(Color32::from_rgb(224, 27, 36)),
-                    );
-                }
-            });
-
-            if !self.compat_message.is_empty() {
-                ui.add_space(3.0);
-                ui.label(
-                    egui::RichText::new(&self.compat_message)
-                        .size(11.0)
-                        .color(Color32::GRAY),
-                );
-            }
-
-            ui.add_space(12.0);
-            ui.separator();
-            ui.add_space(10.0);
-
-            // Interface detection
-            if let Some(ref err) = self.detection_error {
-                ui.label(
-                    egui::RichText::new(format!("⚠ {}", err))
-                        .size(13.0)
-                        .color(Color32::from_rgb(248, 228, 92)),
-                );
-            } else {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Interface:").size(14.0));
-                    ui.add_space(5.0);
-                    ui.label(
-                        egui::RichText::new(&self.interface)
-                            .size(14.0)
-                            .strong()
-                            .color(Color32::from_rgb(53, 132, 228)),
-                    );
-                    ui.add_space(10.0);
-                    ui.label(
-                        egui::RichText::new(format!("Channel {} ({} MHz)", self.channel, self.frequency))
-                            .size(13.0)
-                            .color(Color32::GRAY),
-                    );
-                });
-            }
-
-            ui.add_space(20.0);
-            ui.separator();
-            ui.add_space(15.0);
-
-            // Input fields
-            let is_running = *self.is_running.lock().unwrap();
-            let enabled = self.compatible && self.detection_error.is_none() && !is_running;
-
-            ui.add_enabled_ui(enabled, |ui| {
-                egui::Grid::new("inputs")
-                    .num_columns(2)
-                    .spacing([15.0, 12.0])
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new("SSID:").size(14.0));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.ssid)
-                                .desired_width(280.0)
-                                .font(egui::TextStyle::Body),
-                        );
-                        ui.end_row();
-
-                        ui.label(egui::RichText::new("Password:").size(14.0));
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.password)
-                                    .password(!self.show_password)
-                                    .desired_width(240.0)
-                                    .font(egui::TextStyle::Body),
-                            );
-                            // Show/hide password button
-                            let eye_icon = if self.show_password { "👁" } else { "👁‍🗨" };
-                            if ui.button(eye_icon).clicked() {
-                                self.show_password = !self.show_password;
-                            }
-                        });
-                        ui.end_row();
-                    });
-            });
-
-            ui.add_space(25.0);
-
-            // IGNITE / STOP button
-            ui.vertical_centered(|ui| {
-                if is_running {
-                    let stop_button = egui::Button::new(
-                        egui::RichText::new("Stop Hotspot")
-                            .size(16.0)
-                            .color(Color32::WHITE),
-                    )
-                    .fill(Color32::from_rgb(224, 27, 36))
-                    .min_size(Vec2::new(200.0, 42.0))
-                    .rounding(Rounding::same(6.0));
-
-                    if ui.add(stop_button).clicked() {
-                        self.status_message = stop_hotspot(&self.interface);
-                        *self.is_running.lock().unwrap() = false;
-                    }
-                } else {
-                    let can_ignite = self.compatible && self.detection_error.is_none();
-                    let button_color = if can_ignite {
-                        Color32::from_rgb(53, 132, 228)
-                    } else {
-                        Color32::from_rgb(80, 80, 80)
-                    };
-
-                    let ignite_button = egui::Button::new(
-                        egui::RichText::new("Start Hotspot")
-                            .size(16.0)
-                            .color(Color32::WHITE),
-                    )
-                    .fill(button_color)
-                    .min_size(Vec2::new(200.0, 42.0))
-                    .rounding(Rounding::same(6.0));
-
-                    if ui.add_enabled(can_ignite, ignite_button).clicked() {
-                        let result = start_hotspot(
-                            &self.interface,
-                            self.channel,
-                            &self.ssid,
-                            &self.password,
-                        );
-                        match result {
-                            Ok(msg) => {
-                                self.status_message = msg;
-                                *self.is_running.lock().unwrap() = true;
-                            }
-                            Err(msg) => {
-                                self.status_message = msg;
-                            }
-                        }
-                    }
-                }
-            });
-
-            // Status message
-            if !self.status_message.is_empty() {
-                ui.add_space(20.0);
-                ui.separator();
-                ui.add_space(10.0);
-
-                let color = if self.status_message.starts_with("Error") {
-                    Color32::from_rgb(224, 27, 36)
-                } else if self.status_message.contains("stopped") {
-                    Color32::from_rgb(248, 228, 92)
-                } else {
-                    Color32::from_rgb(46, 194, 126)
-                };
-
-                ui.vertical_centered(|ui| {
-                    ui.label(egui::RichText::new(&self.status_message).size(13.0).color(color));
-                });
-            }
-
-            ui.add_space(10.0);
-        });
-
-        ctx.request_repaint();
-    }
-}
-
-/// Check Wi-Fi card compatibility
 fn check_compatibility() -> (bool, String) {
     let output = match Command::new("iw").arg("list").output() {
         Ok(o) => o,
@@ -411,7 +234,6 @@ fn check_compatibility() -> (bool, String) {
     (false, "AP+Managed simultaneous mode not found".to_string())
 }
 
-/// Detect wireless interface and frequency
 fn detect_interface() -> (String, u32, Option<String>) {
     let output = match Command::new("iw").arg("dev").output() {
         Ok(o) => o,
@@ -440,12 +262,11 @@ fn detect_interface() -> (String, u32, Option<String>) {
         return (interface, frequency, Some("No wireless interface found".to_string()));
     }
     if frequency == 0 {
-        return (interface, frequency, Some("Could not detect frequency (not connected?)".to_string()));
+        return (interface, frequency, Some("Could not detect frequency".to_string()));
     }
     (interface, frequency, None)
 }
 
-/// Convert frequency to channel
 fn freq_to_channel(freq: u32) -> u32 {
     match freq {
         2412 => 1, 2417 => 2, 2422 => 3, 2427 => 4, 2432 => 5,
@@ -463,7 +284,6 @@ fn freq_to_channel(freq: u32) -> u32 {
     }
 }
 
-/// Start hotspot in background
 fn start_hotspot(interface: &str, channel: u32, ssid: &str, password: &str) -> Result<String, String> {
     if ssid.is_empty() {
         return Err("Error: SSID cannot be empty".to_string());
@@ -487,7 +307,6 @@ fn start_hotspot(interface: &str, channel: u32, ssid: &str, password: &str) -> R
     Ok(format!("Hotspot '{}' starting on channel {}...", ssid_display, channel))
 }
 
-/// Stop hotspot
 fn stop_hotspot(interface: &str) -> String {
     let result = Command::new("pkexec")
         .args(["create_ap", "--stop", interface])

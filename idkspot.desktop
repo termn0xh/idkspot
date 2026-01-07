@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=idkspot
+Comment=Create Wi-Fi Hotspots
+Exec=idkspot
+Icon=network-wireless-hotspot
+Terminal=false
+Type=Application
+Categories=Network;System;
+Keywords=wifi;hotspot;wireless;access point;
