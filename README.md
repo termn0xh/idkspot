@@ -1,6 +1,6 @@
 # idkspot
 
-A native GTK4 Linux app for Wi-Fi Hotspot creation.
+A native GTK4 Linux application for Wi-Fi Hotspot creation using simultaneous AP mode.
 
 ![Rust](https://img.shields.io/badge/Rust-000000?style=flat&logo=rust&logoColor=white)
 ![GTK4](https://img.shields.io/badge/GTK4-4A86CF?style=flat&logo=gnome&logoColor=white)
@@ -8,13 +8,13 @@ A native GTK4 Linux app for Wi-Fi Hotspot creation.
 
 ## Features
 
-- 🔍 **Hardware Check** — Detects if your Wi-Fi card supports AP+Managed mode
-- 📡 **Auto-Detection** — Finds wireless interface and current channel
-- 🔥 **One-Click Hotspot** — Start/Stop with a single button
-- 🔒 **Password Visibility Toggle** — Built-in show/hide button
-- 📌 **System Tray** — Minimizes to tray, persists in background
-- 🔄 **Single Instance** — Re-launching from menu shows existing window
-- 🎨 **Native Look** — GTK4 + libadwaita for GNOME integration
+- Hardware compatibility detection for AP+Managed simultaneous mode
+- Automatic wireless interface and channel detection
+- One-click hotspot start/stop
+- Connected devices dialog with hostname lookup
+- System tray integration with background operation
+- Single-instance application behavior
+- Native GNOME/Adwaita theming
 
 ## Dependencies
 
@@ -25,7 +25,7 @@ A native GTK4 Linux app for Wi-Fi Hotspot creation.
 | `libadwaita` | GNOME styling |
 | `dbus` | System tray communication |
 | `iw` | Wireless interface detection |
-| `polkit` | Privilege elevation (`pkexec`) |
+| `polkit` | Privilege elevation |
 
 ### Arch Linux
 
@@ -42,17 +42,12 @@ sudo apt install create-ap libgtk-4-1 libadwaita-1-0 libdbus-1-dev iw policykit-
 ## Installation
 
 ```bash
-# Clone
 git clone https://github.com/yourusername/idkspot.git
 cd idkspot
 
-# Build
 cargo build --release
 
-# Install binary
 sudo cp target/release/idkspot /usr/bin/
-
-# Install desktop entry (shows in app menu)
 sudo cp idkspot.desktop /usr/share/applications/
 ```
 
@@ -62,13 +57,13 @@ sudo cp idkspot.desktop /usr/share/applications/
 idkspot
 ```
 
-Or search for **idkspot** in your application menu.
+Or launch from the application menu.
 
-1. App checks hardware compatibility on startup
-2. Enter SSID and password (min 8 chars)
-3. Click **Start Hotspot**
-4. Close window → App minimizes to system tray
-5. Click tray icon to reopen, right-click for menu
+1. The application checks hardware compatibility on startup
+2. Enter SSID and password (minimum 8 characters)
+3. Click Start Hotspot (authentication required for create_ap)
+4. View connected devices via the Devices button
+5. Close window to minimize to system tray
 
 ## License
 
