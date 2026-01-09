@@ -99,6 +99,7 @@ fn run_as_root(helper: &RootHelper, command: &str) -> bool {
             if let Some(ref mut stdin) = child.stdin {
                 use std::io::Write;
                 if writeln!(stdin, "{}", command).is_ok() {
+                    let _ = stdin.flush(); // IMPORTANT: flush the command
                     return true;
                 }
             }
@@ -476,9 +477,20 @@ fn show_blocked_dialog(parent: &ApplicationWindow) {
     dialog.present();
 }
 
-fn block_device(mac: &str, _interface: &str, root_helper: &RootHelper) -> bool {
-    let cmd = format!("iptables -A FORWARD -m mac --mac-source {} -j DROP 2>/dev/null; iptables -A INPUT -m mac --mac-source {} -j DROP 2>/dev/null", mac, mac);
-    run_as_root(root_helper, &cmd)
+fn block_device(mac: &str, interface: &str, root_helper: &RootHelper) -> bool {
+    // Try root helper first
+    let cmd = format!("iptables -I FORWARD 1 -m mac --mac-source {} -j DROP; iptables -I INPUT 1 -m mac --mac-source {} -j DROP", mac, mac);
+    if run_as_root(root_helper, &cmd) {
+        // Give it a moment to execute
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        return true;
+    }
+    
+    // Fallback: direct pkexec (will ask for password)
+    let result = Command::new("pkexec")
+        .args(["sh", "-c", &cmd])
+        .status();
+    result.map(|s| s.success()).unwrap_or(false)
 }
 
 fn unblock_device(mac: &str) {
