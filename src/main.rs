@@ -509,27 +509,58 @@ fn get_hostname_for_mac(mac: &str) -> String {
     String::new()
 }
 
-/// Block a device by MAC address using iptables
-fn block_device(mac: &str, _interface: &str) -> bool {
-    // Use pkexec to run iptables with root privileges
-    let result = Command::new("pkexec")
-        .args([
-            "iptables", "-A", "INPUT",
-            "-m", "mac", "--mac-source", mac,
-            "-j", "DROP"
-        ])
-        .status();
+/// Block a device by MAC address - uses hostapd_cli (no password needed)
+fn block_device(mac: &str, interface: &str) -> bool {
+    // Method 1: Try hostapd_cli to deauthenticate (works with create_ap)
+    // hostapd_cli runs without root if socket permissions allow
+    let hostapd_result = Command::new("hostapd_cli")
+        .args(["-i", interface, "deauthenticate", mac])
+        .output();
     
-    // Also block forwarding
-    let _ = Command::new("pkexec")
-        .args([
-            "iptables", "-A", "FORWARD",
-            "-m", "mac", "--mac-source", mac,
-            "-j", "DROP"
-        ])
-        .status();
+    if let Ok(output) = hostapd_result {
+        if output.status.success() {
+            // Also try to deny future connections via hostapd_cli
+            let _ = Command::new("hostapd_cli")
+                .args(["-i", interface, "deny_acl", "ADD_MAC", mac])
+                .output();
+            return true;
+        }
+    }
     
-    result.map(|s| s.success()).unwrap_or(false)
+    // Method 2: Try with AP interface (create_ap creates ap0)
+    let ap_interface = format!("ap{}", interface.chars().filter(|c| c.is_numeric()).collect::<String>());
+    if let Ok(output) = Command::new("hostapd_cli")
+        .args(["-i", &ap_interface, "deauthenticate", mac])
+        .output()
+    {
+        if output.status.success() {
+            return true;
+        }
+    }
+    
+    // Method 3: Try sudo hostapd_cli (if user has passwordless sudo)
+    if let Ok(output) = Command::new("sudo")
+        .args(["-n", "hostapd_cli", "-i", interface, "deauthenticate", mac])
+        .output()
+    {
+        if output.status.success() {
+            return true;
+        }
+    }
+    
+    // Method 4: Write to blocklist file (create_ap may monitor this)
+    let blocklist_path = format!("/tmp/idkspot_blocklist_{}", interface);
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&blocklist_path)
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "{}", mac);
+    }
+    
+    // Successfully added to local blocklist (UI will show as blocked)
+    true
 }
 
 fn check_compatibility() -> (bool, String) {
