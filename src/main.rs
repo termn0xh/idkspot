@@ -3,32 +3,18 @@ use gtk4::{Application, ApplicationWindow, Box as GtkBox, Button, Entry, Label, 
 use libadwaita as adw;
 use regex::Regex;
 use std::cell::RefCell;
-use std::process::{Command, Stdio, Child};
+use std::process::Command;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 
 const APP_ID: &str = "org.idkspot.Hotspot";
-const BLOCKLIST_FILE: &str = "/tmp/idkspot_blocked_macs.txt";
 
-// Global state for tray communication
 static SHOW_WINDOW: AtomicBool = AtomicBool::new(true);
 static APP_RUNNING: AtomicBool = AtomicBool::new(true);
 
-// Root helper process - acquired once at startup
-type RootHelper = Arc<Mutex<Option<Child>>>;
-
 fn main() -> gtk4::glib::ExitCode {
-    // Start tray icon in background thread
-    std::thread::spawn(|| {
-        run_tray_service();
-    });
+    std::thread::spawn(|| run_tray_service());
 
-    // Request root access ONCE at startup via pkexec
-    // This spawns a persistent root shell that we can send commands to
-    let root_helper = acquire_root_helper();
-
-    // Initialize libadwaita
     adw::init().expect("Failed to initialize libadwaita");
 
     let app = Application::builder()
@@ -39,7 +25,6 @@ fn main() -> gtk4::glib::ExitCode {
     let window: Rc<RefCell<Option<ApplicationWindow>>> = Rc::new(RefCell::new(None));
     
     let window_clone = window.clone();
-    let root_helper_clone = root_helper.clone();
     app.connect_activate(move |app| {
         if let Some(ref win) = *window_clone.borrow() {
             SHOW_WINDOW.store(true, Ordering::SeqCst);
@@ -47,65 +32,15 @@ fn main() -> gtk4::glib::ExitCode {
             win.present();
             return;
         }
-        build_ui(app, window_clone.clone(), root_helper_clone.clone());
+        build_ui(app, window_clone.clone());
     });
 
-    app.connect_command_line(move |app, _| {
-        app.activate();
-        0
-    });
-    
+    app.connect_command_line(move |app, _| { app.activate(); 0 });
     app.set_accels_for_action("app.quit", &["<Primary>q"]);
 
     let result = app.run();
-    
     APP_RUNNING.store(false, Ordering::SeqCst);
-    
-    // Cleanup root helper
-    if let Ok(mut helper) = root_helper.lock() {
-        if let Some(ref mut child) = *helper {
-            let _ = child.kill();
-        }
-    }
-    
     result
-}
-
-/// Acquire root helper at startup - only asks for password once
-fn acquire_root_helper() -> RootHelper {
-    let helper: RootHelper = Arc::new(Mutex::new(None));
-    
-    // Spawn pkexec with a shell that stays open
-    // We'll send iptables commands through stdin
-    if let Ok(child) = Command::new("pkexec")
-        .args(["sh", "-c", "while read cmd; do eval \"$cmd\"; done"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        if let Ok(mut h) = helper.lock() {
-            *h = Some(child);
-        }
-    }
-    
-    helper
-}
-
-/// Send a command to the root helper
-fn run_as_root(helper: &RootHelper, command: &str) -> bool {
-    if let Ok(mut h) = helper.lock() {
-        if let Some(ref mut child) = *h {
-            if let Some(ref mut stdin) = child.stdin {
-                use std::io::Write;
-                if writeln!(stdin, "{}", command).is_ok() {
-                    let _ = stdin.flush(); // IMPORTANT: flush the command
-                    return true;
-                }
-            }
-        }
-    }
-    false
 }
 
 fn run_tray_service() {
@@ -139,7 +74,7 @@ fn run_tray_service() {
     let _ = handle;
 }
 
-fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>>, root_helper: RootHelper) {
+fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>>) {
     let (compatible, compat_message) = check_compatibility();
     let (interface, frequency, detection_error) = detect_interface();
     let channel = freq_to_channel(frequency);
@@ -148,12 +83,12 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
     let window = ApplicationWindow::builder()
         .application(app)
         .title("idkspot")
-        .default_width(450)
-        .default_height(520)
+        .default_width(420)
+        .default_height(400)
         .resizable(true)
         .build();
 
-    window.set_size_request(400, 450);
+    window.set_size_request(380, 350);
 
     window.connect_close_request(move |win| {
         win.set_visible(false);
@@ -175,7 +110,7 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
     // Hardware status
     let status_box = GtkBox::new(Orientation::Horizontal, 8);
     status_box.set_halign(gtk4::Align::Center);
-    status_box.append(&Label::new(Some("Hardware Status:")));
+    status_box.append(&Label::new(Some("Hardware:")));
     let compat_label = if compatible {
         let l = Label::new(Some("✓ Compatible")); l.add_css_class("success"); l
     } else {
@@ -229,50 +164,27 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
     status_msg.set_margin_top(6);
     main_box.append(&status_msg);
 
+    // Buttons row
+    let buttons_box = GtkBox::new(Orientation::Horizontal, 8);
+    buttons_box.set_margin_top(8);
+    buttons_box.set_halign(gtk4::Align::Center);
+
     let action_button = Button::with_label("Start Hotspot");
     action_button.add_css_class("suggested-action");
     action_button.add_css_class("pill");
-    action_button.set_margin_top(8);
-
     let can_start = compatible && detection_error.is_none();
     action_button.set_sensitive(can_start);
 
-    // Connected devices section
-    let devices_frame = GtkBox::new(Orientation::Vertical, 6);
-    devices_frame.set_margin_top(12);
-    devices_frame.set_visible(false);
-
-    let devices_header = GtkBox::new(Orientation::Horizontal, 8);
-    let devices_label = Label::new(Some("Connected Devices"));
-    devices_label.add_css_class("title-4");
-    devices_label.set_hexpand(true);
-    devices_label.set_halign(gtk4::Align::Start);
-    devices_header.append(&devices_label);
-
-    // Blocked list button
-    let blocked_btn = Button::with_label("Blocked");
-    blocked_btn.add_css_class("flat");
-    let window_clone_for_blocked = window.clone();
-    blocked_btn.connect_clicked(move |_| {
-        show_blocked_dialog(&window_clone_for_blocked);
+    // Connected devices button (only visible when running)
+    let devices_button = Button::with_label("Devices");
+    devices_button.add_css_class("flat");
+    devices_button.set_visible(false);
+    
+    let window_clone_for_devices = window.clone();
+    let interface_for_devices = interface.clone();
+    devices_button.connect_clicked(move |_| {
+        show_devices_dialog(&window_clone_for_devices, &interface_for_devices);
     });
-    devices_header.append(&blocked_btn);
-    devices_frame.append(&devices_header);
-
-    let scroll = ScrolledWindow::new();
-    scroll.set_min_content_height(100);
-    scroll.set_max_content_height(150);
-    let devices_list = ListBox::new();
-    devices_list.add_css_class("boxed-list");
-    devices_list.set_selection_mode(gtk4::SelectionMode::None);
-    scroll.set_child(Some(&devices_list));
-    devices_frame.append(&scroll);
-
-    let no_devices_label = Label::new(Some("No devices connected"));
-    no_devices_label.add_css_class("dim-label");
-    devices_frame.append(&no_devices_label);
-
-    main_box.append(&devices_frame);
 
     // Action button logic
     let interface_clone = interface.clone();
@@ -281,7 +193,7 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
     let ssid_entry_clone = ssid_entry.clone();
     let pass_entry_clone = pass_entry.clone();
     let button_clone = action_button.clone();
-    let devices_frame_clone = devices_frame.clone();
+    let devices_button_clone = devices_button.clone();
 
     action_button.connect_clicked(move |_| {
         let mut running = is_running_clone.borrow_mut();
@@ -293,7 +205,7 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
             button_clone.add_css_class("suggested-action");
             ssid_entry_clone.set_sensitive(true);
             pass_entry_clone.set_sensitive(true);
-            devices_frame_clone.set_visible(false);
+            devices_button_clone.set_visible(false);
             *running = false;
         } else {
             let ssid = ssid_entry_clone.text().to_string();
@@ -306,7 +218,7 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
                     button_clone.add_css_class("destructive-action");
                     ssid_entry_clone.set_sensitive(false);
                     pass_entry_clone.set_sensitive(false);
-                    devices_frame_clone.set_visible(true);
+                    devices_button_clone.set_visible(true);
                     *running = true;
                 }
                 Err(msg) => {
@@ -317,11 +229,13 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
         }
     });
 
-    main_box.append(&action_button);
+    buttons_box.append(&action_button);
+    buttons_box.append(&devices_button);
+    main_box.append(&buttons_box);
 
     let tray_hint = Label::new(Some("Close window to minimize to tray"));
     tray_hint.add_css_class("dim-label");
-    tray_hint.set_margin_top(10);
+    tray_hint.set_margin_top(12);
     main_box.append(&tray_hint);
 
     // CSS
@@ -339,32 +253,6 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
     window.present();
     *window_ref.borrow_mut() = Some(window.clone());
 
-    // Refresh devices periodically
-    let interface_for_refresh = interface.clone();
-    let is_running_for_refresh = is_running.clone();
-    let devices_list_clone = devices_list.clone();
-    let no_devices_label_clone = no_devices_label.clone();
-    let root_helper_clone = root_helper.clone();
-    
-    gtk4::glib::timeout_add_local(std::time::Duration::from_secs(2), move || {
-        if *is_running_for_refresh.borrow() {
-            let devices = get_connected_devices(&interface_for_refresh);
-            while let Some(child) = devices_list_clone.first_child() {
-                devices_list_clone.remove(&child);
-            }
-            if devices.is_empty() {
-                no_devices_label_clone.set_visible(true);
-            } else {
-                no_devices_label_clone.set_visible(false);
-                for device in devices {
-                    let row = create_device_row(&device.0, &device.1, &interface_for_refresh, root_helper_clone.clone());
-                    devices_list_clone.append(&row);
-                }
-            }
-        }
-        gtk4::glib::ControlFlow::Continue
-    });
-
     let window_clone = window.clone();
     gtk4::glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
         if SHOW_WINDOW.load(Ordering::SeqCst) && !window_clone.is_visible() {
@@ -376,52 +264,16 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
     });
 }
 
-fn create_device_row(mac: &str, hostname: &str, interface: &str, root_helper: RootHelper) -> ListBoxRow {
-    let row = ListBoxRow::new();
-    let hbox = GtkBox::new(Orientation::Horizontal, 12);
-    hbox.set_margin_top(6);
-    hbox.set_margin_bottom(6);
-    hbox.set_margin_start(8);
-    hbox.set_margin_end(8);
-    
-    let info_box = GtkBox::new(Orientation::Vertical, 2);
-    info_box.set_hexpand(true);
-    let name_label = Label::new(Some(if hostname.is_empty() { "Unknown Device" } else { hostname }));
-    name_label.set_halign(gtk4::Align::Start);
-    info_box.append(&name_label);
-    let mac_label = Label::new(Some(mac));
-    mac_label.set_halign(gtk4::Align::Start);
-    mac_label.add_css_class("device-mac");
-    info_box.append(&mac_label);
-    hbox.append(&info_box);
-    
-    let block_btn = Button::with_label("Block");
-    block_btn.add_css_class("destructive-action");
-    
-    let mac_clone = mac.to_string();
-    let iface_clone = interface.to_string();
-    block_btn.connect_clicked(move |btn| {
-        if block_device(&mac_clone, &iface_clone, &root_helper) {
-            add_to_blocklist(&mac_clone);
-            btn.set_label("Blocked");
-            btn.set_sensitive(false);
-        }
-    });
-    
-    hbox.append(&block_btn);
-    row.set_child(Some(&hbox));
-    row
-}
-
-fn show_blocked_dialog(parent: &ApplicationWindow) {
+fn show_devices_dialog(parent: &ApplicationWindow, interface: &str) {
     let dialog = Dialog::builder()
-        .title("Blocked Devices")
+        .title("Connected Devices")
         .transient_for(parent)
         .modal(true)
         .default_width(350)
         .default_height(300)
         .build();
 
+    dialog.add_button("Refresh", ResponseType::Apply);
     dialog.add_button("Close", ResponseType::Close);
 
     let content = dialog.content_area();
@@ -436,13 +288,13 @@ fn show_blocked_dialog(parent: &ApplicationWindow) {
     list.add_css_class("boxed-list");
     list.set_selection_mode(gtk4::SelectionMode::None);
 
-    let blocked = load_blocklist();
-    if blocked.is_empty() {
-        let label = Label::new(Some("No blocked devices"));
+    let devices = get_connected_devices(interface);
+    if devices.is_empty() {
+        let label = Label::new(Some("No devices connected"));
         label.add_css_class("dim-label");
         content.append(&label);
     } else {
-        for mac in blocked {
+        for (mac, hostname) in devices {
             let row = ListBoxRow::new();
             let hbox = GtkBox::new(Orientation::Horizontal, 12);
             hbox.set_margin_top(6);
@@ -450,22 +302,18 @@ fn show_blocked_dialog(parent: &ApplicationWindow) {
             hbox.set_margin_start(8);
             hbox.set_margin_end(8);
 
+            let info_box = GtkBox::new(Orientation::Vertical, 2);
+            let name = if hostname.is_empty() { "Unknown Device".to_string() } else { hostname };
+            let name_label = Label::new(Some(&name));
+            name_label.set_halign(gtk4::Align::Start);
+            info_box.append(&name_label);
+            
             let mac_label = Label::new(Some(&mac));
-            mac_label.set_hexpand(true);
             mac_label.set_halign(gtk4::Align::Start);
             mac_label.add_css_class("device-mac");
-            hbox.append(&mac_label);
-
-            let unblock_btn = Button::with_label("Unblock");
-            let mac_clone = mac.clone();
-            unblock_btn.connect_clicked(move |btn| {
-                remove_from_blocklist(&mac_clone);
-                unblock_device(&mac_clone);
-                btn.set_label("Unblocked");
-                btn.set_sensitive(false);
-            });
-            hbox.append(&unblock_btn);
-
+            info_box.append(&mac_label);
+            
+            hbox.append(&info_box);
             row.set_child(Some(&hbox));
             list.append(&row);
         }
@@ -473,59 +321,21 @@ fn show_blocked_dialog(parent: &ApplicationWindow) {
         content.append(&scroll);
     }
 
-    dialog.connect_response(|dialog, _| dialog.close());
+    let iface_clone = interface.to_string();
+    let parent_clone = parent.clone();
+    dialog.connect_response(move |dialog, response| {
+        if response == ResponseType::Apply {
+            dialog.close();
+            show_devices_dialog(&parent_clone, &iface_clone);
+        } else {
+            dialog.close();
+        }
+    });
     dialog.present();
-}
-
-fn block_device(mac: &str, interface: &str, root_helper: &RootHelper) -> bool {
-    // Try root helper first
-    let cmd = format!("iptables -I FORWARD 1 -m mac --mac-source {} -j DROP; iptables -I INPUT 1 -m mac --mac-source {} -j DROP", mac, mac);
-    if run_as_root(root_helper, &cmd) {
-        // Give it a moment to execute
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        return true;
-    }
-    
-    // Fallback: direct pkexec (will ask for password)
-    let result = Command::new("pkexec")
-        .args(["sh", "-c", &cmd])
-        .status();
-    result.map(|s| s.success()).unwrap_or(false)
-}
-
-fn unblock_device(mac: &str) {
-    // Try to remove iptables rules (may fail if root helper is gone, but that's ok)
-    let _ = Command::new("pkexec")
-        .args(["sh", "-c", &format!("iptables -D FORWARD -m mac --mac-source {} -j DROP 2>/dev/null; iptables -D INPUT -m mac --mac-source {} -j DROP 2>/dev/null", mac, mac)])
-        .status();
-}
-
-fn add_to_blocklist(mac: &str) {
-    use std::io::Write;
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(BLOCKLIST_FILE) {
-        let _ = writeln!(file, "{}", mac);
-    }
-}
-
-fn remove_from_blocklist(mac: &str) {
-    if let Ok(content) = std::fs::read_to_string(BLOCKLIST_FILE) {
-        let filtered: Vec<&str> = content.lines().filter(|l| !l.eq_ignore_ascii_case(mac)).collect();
-        let _ = std::fs::write(BLOCKLIST_FILE, filtered.join("\n"));
-    }
-}
-
-fn load_blocklist() -> Vec<String> {
-    std::fs::read_to_string(BLOCKLIST_FILE)
-        .unwrap_or_default()
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|l| l.to_uppercase())
-        .collect()
 }
 
 fn get_connected_devices(interface: &str) -> Vec<(String, String)> {
     let mut devices = Vec::new();
-    let blocked = load_blocklist();
     
     if let Ok(output) = Command::new("iw").args(["dev", interface, "station", "dump"]).output() {
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -533,10 +343,8 @@ fn get_connected_devices(interface: &str) -> Vec<(String, String)> {
         for cap in mac_re.captures_iter(&stdout) {
             if let Some(mac) = cap.get(1) {
                 let mac_str = mac.as_str().to_uppercase();
-                if !blocked.contains(&mac_str) {
-                    let hostname = get_hostname_for_mac(&mac_str);
-                    devices.push((mac_str, hostname));
-                }
+                let hostname = get_hostname_for_mac(&mac_str);
+                devices.push((mac_str, hostname));
             }
         }
     }
@@ -548,7 +356,7 @@ fn get_connected_devices(interface: &str) -> Vec<(String, String)> {
             for cap in arp_re.captures_iter(&stdout) {
                 if let Some(mac) = cap.get(2) {
                     let mac_str = mac.as_str().to_uppercase();
-                    if !blocked.contains(&mac_str) && !devices.iter().any(|(m, _)| m == &mac_str) {
+                    if !devices.iter().any(|(m, _)| m == &mac_str) {
                         let hostname = get_hostname_for_mac(&mac_str);
                         devices.push((mac_str, hostname));
                     }
@@ -574,7 +382,7 @@ fn get_hostname_for_mac(mac: &str) -> String {
 }
 
 fn check_compatibility() -> (bool, String) {
-    let output = match Command::new("iw").arg("list").output() { Ok(o) => o, Err(e) => return (false, format!("iw list failed: {}", e)) };
+    let output = match Command::new("iw").arg("list").output() { Ok(o) => o, Err(e) => return (false, format!("iw failed: {}", e)) };
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut in_valid = false;
     let managed_re = Regex::new(r"(?i)#\{[^}]*\bmanaged\b[^}]*\}").unwrap();
@@ -590,7 +398,7 @@ fn check_compatibility() -> (bool, String) {
 }
 
 fn detect_interface() -> (String, u32, Option<String>) {
-    let output = match Command::new("iw").arg("dev").output() { Ok(o) => o, Err(e) => return (String::new(), 0, Some(format!("iw dev failed: {}", e))) };
+    let output = match Command::new("iw").arg("dev").output() { Ok(o) => o, Err(e) => return (String::new(), 0, Some(format!("iw failed: {}", e))) };
     let stdout = String::from_utf8_lossy(&output.stdout);
     let iface_re = Regex::new(r"Interface\s+(\w+)").unwrap();
     let freq_re = Regex::new(r"channel\s+\d+\s+\((\d+)\s+MHz\)").unwrap();
@@ -600,8 +408,8 @@ fn detect_interface() -> (String, u32, Option<String>) {
         if let Some(caps) = iface_re.captures(line) { interface = caps.get(1).map_or("", |m| m.as_str()).to_string(); }
         if let Some(caps) = freq_re.captures(line) { if let Ok(f) = caps.get(1).map_or("0", |m| m.as_str()).parse() { frequency = f; } }
     }
-    if interface.is_empty() { return (interface, frequency, Some("No wireless interface".to_string())); }
-    if frequency == 0 { return (interface, frequency, Some("No frequency detected".to_string())); }
+    if interface.is_empty() { return (interface, frequency, Some("No interface".to_string())); }
+    if frequency == 0 { return (interface, frequency, Some("No frequency".to_string())); }
     (interface, frequency, None)
 }
 
