@@ -1,5 +1,5 @@
 use gtk4::prelude::*;
-use gtk4::{Application, ApplicationWindow, Box as GtkBox, Button, Entry, Label, Orientation, PasswordEntry, gio};
+use gtk4::{Application, ApplicationWindow, Box as GtkBox, Button, Entry, Label, Orientation, PasswordEntry, gio, ScrolledWindow, ListBox, ListBoxRow};
 use libadwaita as adw;
 use regex::Regex;
 use std::cell::RefCell;
@@ -45,7 +45,6 @@ fn main() -> gtk4::glib::ExitCode {
     });
 
     // Handle command line (for second instance launches)
-    let window_clone2 = window.clone();
     app.connect_command_line(move |app, _| {
         // Activate the app (which will show existing window or create new one)
         app.activate();
@@ -134,16 +133,15 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
     let window = ApplicationWindow::builder()
         .application(app)
         .title("idkspot")
-        .default_width(420)
-        .default_height(380)
+        .default_width(450)
+        .default_height(520)
         .resizable(true)
         .build();
 
     // Set minimum size
-    window.set_size_request(380, 340);
+    window.set_size_request(400, 450);
 
     // Handle window close - hide instead of destroy
-    let app_clone = app.clone();
     window.connect_close_request(move |win| {
         win.set_visible(false);
         SHOW_WINDOW.store(false, Ordering::SeqCst);
@@ -151,11 +149,11 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
     });
 
     // Main container
-    let main_box = GtkBox::new(Orientation::Vertical, 12);
-    main_box.set_margin_top(20);
-    main_box.set_margin_bottom(20);
-    main_box.set_margin_start(24);
-    main_box.set_margin_end(24);
+    let main_box = GtkBox::new(Orientation::Vertical, 10);
+    main_box.set_margin_top(16);
+    main_box.set_margin_bottom(16);
+    main_box.set_margin_start(20);
+    main_box.set_margin_end(20);
 
     // Title
     let title = Label::new(Some("idkspot"));
@@ -205,8 +203,8 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
 
     // Separator
     let sep1 = gtk4::Separator::new(Orientation::Horizontal);
-    sep1.set_margin_top(8);
-    sep1.set_margin_bottom(8);
+    sep1.set_margin_top(6);
+    sep1.set_margin_bottom(6);
     main_box.append(&sep1);
 
     // SSID entry
@@ -229,18 +227,47 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
 
     // Status message
     let status_msg = Label::new(None);
-    status_msg.set_margin_top(8);
+    status_msg.set_margin_top(6);
     main_box.append(&status_msg);
 
     // Action button
     let action_button = Button::with_label("Start Hotspot");
     action_button.add_css_class("suggested-action");
     action_button.add_css_class("pill");
-    action_button.set_margin_top(12);
+    action_button.set_margin_top(8);
 
     // Disable if not compatible
     let can_start = compatible && detection_error.is_none();
     action_button.set_sensitive(can_start);
+
+    // ============== Connected Devices Section ==============
+    let devices_frame = GtkBox::new(Orientation::Vertical, 6);
+    devices_frame.set_margin_top(12);
+    devices_frame.set_visible(false); // Hidden until hotspot starts
+
+    let devices_label = Label::new(Some("Connected Devices"));
+    devices_label.add_css_class("title-4");
+    devices_label.set_halign(gtk4::Align::Start);
+    devices_frame.append(&devices_label);
+
+    // Scrolled list for devices
+    let scroll = ScrolledWindow::new();
+    scroll.set_min_content_height(120);
+    scroll.set_max_content_height(180);
+    scroll.set_vexpand(false);
+    
+    let devices_list = ListBox::new();
+    devices_list.add_css_class("boxed-list");
+    devices_list.set_selection_mode(gtk4::SelectionMode::None);
+    scroll.set_child(Some(&devices_list));
+    devices_frame.append(&scroll);
+
+    let no_devices_label = Label::new(Some("No devices connected"));
+    no_devices_label.add_css_class("dim-label");
+    no_devices_label.set_margin_top(8);
+    devices_frame.append(&no_devices_label);
+
+    main_box.append(&devices_frame);
 
     // Clone for closure
     let interface_clone = interface.clone();
@@ -249,6 +276,7 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
     let ssid_entry_clone = ssid_entry.clone();
     let pass_entry_clone = pass_entry.clone();
     let button_clone = action_button.clone();
+    let devices_frame_clone = devices_frame.clone();
 
     action_button.connect_clicked(move |_| {
         let mut running = is_running_clone.borrow_mut();
@@ -264,6 +292,7 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
             button_clone.add_css_class("suggested-action");
             ssid_entry_clone.set_sensitive(true);
             pass_entry_clone.set_sensitive(true);
+            devices_frame_clone.set_visible(false);
             *running = false;
         } else {
             // Start hotspot
@@ -280,6 +309,7 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
                     button_clone.add_css_class("destructive-action");
                     ssid_entry_clone.set_sensitive(false);
                     pass_entry_clone.set_sensitive(false);
+                    devices_frame_clone.set_visible(true);
                     *running = true;
                 }
                 Err(msg) => {
@@ -297,7 +327,7 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
     let tray_hint = Label::new(Some("Close window to minimize to system tray"));
     tray_hint.add_css_class("dim-label");
     tray_hint.add_css_class("caption");
-    tray_hint.set_margin_top(12);
+    tray_hint.set_margin_top(10);
     main_box.append(&tray_hint);
 
     // Add custom CSS
@@ -308,6 +338,9 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
         .error { color: #e01b24; }
         .warning { color: #f8e45c; }
         .accent { color: #3584e4; font-weight: bold; }
+        .device-row { padding: 8px 12px; }
+        .device-mac { font-family: monospace; font-size: 11px; color: #9a9996; }
+        .block-btn { padding: 4px 12px; }
         "#,
     );
     gtk4::style_context_add_provider_for_display(
@@ -322,6 +355,34 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
     // Store window reference for single-instance re-activation
     *window_ref.borrow_mut() = Some(window.clone());
 
+    // Periodically refresh connected devices when hotspot is running
+    let interface_for_refresh = interface.clone();
+    let is_running_for_refresh = is_running.clone();
+    let devices_list_clone = devices_list.clone();
+    let no_devices_label_clone = no_devices_label.clone();
+    
+    gtk4::glib::timeout_add_local(std::time::Duration::from_secs(2), move || {
+        if *is_running_for_refresh.borrow() {
+            let devices = get_connected_devices(&interface_for_refresh);
+            
+            // Clear existing rows
+            while let Some(child) = devices_list_clone.first_child() {
+                devices_list_clone.remove(&child);
+            }
+            
+            if devices.is_empty() {
+                no_devices_label_clone.set_visible(true);
+            } else {
+                no_devices_label_clone.set_visible(false);
+                for device in devices {
+                    let row = create_device_row(&device.0, &device.1, &interface_for_refresh);
+                    devices_list_clone.append(&row);
+                }
+            }
+        }
+        gtk4::glib::ControlFlow::Continue
+    });
+
     // Check periodically if window should be shown
     let window_clone = window.clone();
     gtk4::glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
@@ -334,6 +395,141 @@ fn build_ui(app: &Application, window_ref: Rc<RefCell<Option<ApplicationWindow>>
         }
         gtk4::glib::ControlFlow::Continue
     });
+}
+
+/// Create a row for a connected device with block button
+fn create_device_row(mac: &str, hostname: &str, interface: &str) -> ListBoxRow {
+    let row = ListBoxRow::new();
+    row.add_css_class("device-row");
+    
+    let hbox = GtkBox::new(Orientation::Horizontal, 12);
+    hbox.set_margin_top(6);
+    hbox.set_margin_bottom(6);
+    hbox.set_margin_start(8);
+    hbox.set_margin_end(8);
+    
+    // Device info
+    let info_box = GtkBox::new(Orientation::Vertical, 2);
+    info_box.set_hexpand(true);
+    
+    let name_label = Label::new(Some(if hostname.is_empty() { "Unknown Device" } else { hostname }));
+    name_label.set_halign(gtk4::Align::Start);
+    name_label.add_css_class("heading");
+    info_box.append(&name_label);
+    
+    let mac_label = Label::new(Some(mac));
+    mac_label.set_halign(gtk4::Align::Start);
+    mac_label.add_css_class("device-mac");
+    info_box.append(&mac_label);
+    
+    hbox.append(&info_box);
+    
+    // Block button
+    let block_btn = Button::with_label("Block");
+    block_btn.add_css_class("destructive-action");
+    block_btn.add_css_class("block-btn");
+    
+    let mac_clone = mac.to_string();
+    let iface_clone = interface.to_string();
+    block_btn.connect_clicked(move |btn| {
+        if block_device(&mac_clone, &iface_clone) {
+            btn.set_label("Blocked");
+            btn.set_sensitive(false);
+        }
+    });
+    
+    hbox.append(&block_btn);
+    row.set_child(Some(&hbox));
+    row
+}
+
+/// Get list of connected devices (MAC, hostname)
+fn get_connected_devices(interface: &str) -> Vec<(String, String)> {
+    let mut devices = Vec::new();
+    
+    // Try to get stations from iw
+    if let Ok(output) = Command::new("iw").args(["dev", interface, "station", "dump"]).output() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mac_re = Regex::new(r"Station ([0-9a-fA-F:]{17})").unwrap();
+        
+        for cap in mac_re.captures_iter(&stdout) {
+            if let Some(mac) = cap.get(1) {
+                let mac_str = mac.as_str().to_uppercase();
+                // Try to get hostname from ARP or DHCP leases
+                let hostname = get_hostname_for_mac(&mac_str);
+                devices.push((mac_str, hostname));
+            }
+        }
+    }
+    
+    // Fallback: check ARP table for AP interface
+    if devices.is_empty() {
+        if let Ok(output) = Command::new("arp").arg("-n").output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let arp_re = Regex::new(r"(\d+\.\d+\.\d+\.\d+)\s+\S+\s+([0-9a-fA-F:]{17})").unwrap();
+            
+            for cap in arp_re.captures_iter(&stdout) {
+                if let (Some(_ip), Some(mac)) = (cap.get(1), cap.get(2)) {
+                    let mac_str = mac.as_str().to_uppercase();
+                    let hostname = get_hostname_for_mac(&mac_str);
+                    // Avoid duplicates
+                    if !devices.iter().any(|(m, _)| m == &mac_str) {
+                        devices.push((mac_str, hostname));
+                    }
+                }
+            }
+        }
+    }
+    
+    devices
+}
+
+/// Try to get hostname for a MAC address
+fn get_hostname_for_mac(mac: &str) -> String {
+    // Check dnsmasq leases (commonly used by create_ap)
+    if let Ok(content) = std::fs::read_to_string("/var/lib/misc/dnsmasq.leases") {
+        for line in content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 4 && parts[1].eq_ignore_ascii_case(mac) {
+                return parts[3].to_string();
+            }
+        }
+    }
+    
+    // Check alternate location
+    if let Ok(content) = std::fs::read_to_string("/tmp/dnsmasq.leases") {
+        for line in content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 4 && parts[1].eq_ignore_ascii_case(mac) {
+                return parts[3].to_string();
+            }
+        }
+    }
+    
+    String::new()
+}
+
+/// Block a device by MAC address using iptables
+fn block_device(mac: &str, _interface: &str) -> bool {
+    // Use pkexec to run iptables with root privileges
+    let result = Command::new("pkexec")
+        .args([
+            "iptables", "-A", "INPUT",
+            "-m", "mac", "--mac-source", mac,
+            "-j", "DROP"
+        ])
+        .status();
+    
+    // Also block forwarding
+    let _ = Command::new("pkexec")
+        .args([
+            "iptables", "-A", "FORWARD",
+            "-m", "mac", "--mac-source", mac,
+            "-j", "DROP"
+        ])
+        .status();
+    
+    result.map(|s| s.success()).unwrap_or(false)
 }
 
 fn check_compatibility() -> (bool, String) {
